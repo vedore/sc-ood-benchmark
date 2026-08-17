@@ -264,3 +264,17 @@ Before code, produce these three small artifacts:
 3. label_mapping.csv — original labels → harmonized coarse/fine labels, with exclusions explained.
 
 Then nôs build the benchmark harness around those. The representation extractors should be plugins; everything else — splits, annotation heads, metrics, plots — must be shared. That architecture keeps the science comparable and stops model-specific spaghetti from colonizing the lab. 🫡
+
+## Independent datasets
+
+Developing: https://cellxgene.cziscience.com/collections/b0cf0afa-ec40-4d65-b570-ed4ceacc6813
+
+Final dataset: https://cellxgene.cziscience.com/collections/dde06e0f-ab3b-46be-96a2-a8082383c4a1
+
+
+### Rubberish
+
+  Cell 0
+  ├── adata.X[0]        gene-expression measurements
+  ├── adata.raw.X[0]    raw gene counts
+  └── manifest.iloc[0]  metadata and labels
