@@ -278,3 +278,18 @@ Final dataset: https://cellxgene.cziscience.com/collections/dde06e0f-ab3b-46be-9
   ├── adata.X[0]        gene-expression measurements
   ├── adata.raw.X[0]    raw gene counts
   └── manifest.iloc[0]  metadata and labels
+
+
+If a classifier learns cell types from known donors or laboratories, which representation works best when it sees cells from a new donor or laboratory?
+
+## Dataset metadata map
+
+Create aggregate hierarchy tables and plots from the generated manifest:
+
+```bash
+python3 notebooks/02_dataset_map.py
+```
+
+This requires `pandas` and writes a visual `dataset_map.html` plus supporting
+CSV tables to `reports/data_map/`. It reads metadata only, not the `.h5ad`
+expression matrix.
