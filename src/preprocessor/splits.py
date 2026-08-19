@@ -11,6 +11,7 @@ import pandas as pd
 
 REQUIRED_COLUMNS = ("cell_id", "donor_id", "institute")
 SPLIT_NAMES = ("train", "dev", "test")
+ALLOWED_SPLITS = (*SPLIT_NAMES, "excluded")
 
 
 def _slugify(value: str) -> str:
@@ -22,6 +23,8 @@ def assign_donor_splits(
     seed: int = 42,
     institute: str = "Genome Institute of Singapore",
 ) -> pd.DataFrame:
+    """Assign eligible donors from one institute to train, dev, and test."""
+
     missing_columns = set(REQUIRED_COLUMNS).difference(manifest.columns)
     if missing_columns:
         raise ValueError(
@@ -33,7 +36,7 @@ def assign_donor_splits(
     if manifest["cell_id"].duplicated().any():
         raise ValueError("Manifest contains duplicate cell IDs")
     if manifest.loc[:, REQUIRED_COLUMNS].isna().any().any():
-        raise ValueError("Manifest contains missing cell, donor, or site values")
+        raise ValueError("Manifest contains missing cell, donor, or institute values")
 
     institutes_per_donor = manifest.groupby("donor_id")["institute"].nunique()
     multi_institute_donors = institutes_per_donor[institutes_per_donor > 1].index
@@ -88,6 +91,8 @@ def create_train_test_dev_split(
     institute: str = "Genome Institute of Singapore",
     output_dir: str | Path = "data/splits",
 ) -> Path:
+    """Create and save a reproducible donor split manifest."""
+
     manifest = pd.read_csv(
         manifest_file,
         usecols=list(REQUIRED_COLUMNS),
@@ -113,10 +118,12 @@ def create_train_test_dev_split(
     return output_file
 
 
-def load_data_splits(
-    adata_file: str | Path, split_file: str | Path
-) -> tuple[ad.AnnData, dict[str, ad.AnnData]]:
-    adata = ad.read_h5ad(adata_file, backed="r")
+def create_split_views(
+    adata: ad.AnnData,
+    split_file: str | Path,
+) -> dict[str, ad.AnnData]:
+    """Create AnnData train, dev, and test views from a split manifest."""
+
     split_manifest = pd.read_csv(
         split_file,
         usecols=["cell_id", "split"],
@@ -124,34 +131,37 @@ def load_data_splits(
     )
 
     if split_manifest["cell_id"].duplicated().any():
-        adata.file.close()
         raise ValueError("Split manifest contains duplicate cell IDs")
+    if split_manifest[["cell_id", "split"]].isna().any().any():
+        raise ValueError("Split manifest contains missing cell IDs or split values")
 
-    invalid_splits = set(split_manifest["split"].dropna()).difference(
-        (*SPLIT_NAMES, "excluded")
-    )
+    invalid_splits = set(split_manifest["split"]).difference(ALLOWED_SPLITS)
     if invalid_splits:
-        adata.file.close()
         raise ValueError(f"Split manifest contains invalid splits: {invalid_splits}")
+
+    manifest_cell_ids = pd.Index(split_manifest["cell_id"])
+    missing_cell_ids = adata.obs_names.difference(manifest_cell_ids)
+    extra_cell_ids = manifest_cell_ids.difference(adata.obs_names)
+    if not missing_cell_ids.empty or not extra_cell_ids.empty:
+        raise ValueError(
+            "AnnData and split manifest cell IDs do not match: "
+            f"missing={len(missing_cell_ids)}, extra={len(extra_cell_ids)}"
+        )
 
     aligned_split = split_manifest.set_index("cell_id")["split"].reindex(
         adata.obs_names
     )
-    if aligned_split.isna().any():
-        adata.file.close()
-        raise ValueError("Split manifest does not contain every AnnData cell")
 
     splits = {
         split: adata[aligned_split.eq(split).to_numpy(), :]
         for split in SPLIT_NAMES
     }
     if any(split.n_obs == 0 for split in splits.values()):
-        adata.file.close()
         raise ValueError("Train, dev, and test AnnData views must all be non-empty")
-    return adata, splits
+    return splits
 
 
-def main() -> None:
+def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Create a reproducible donor-grouped train/dev/test split."
     )
@@ -163,7 +173,11 @@ def main() -> None:
         help="Value from the manifest's institute column.",
     )
     parser.add_argument("--output-dir", type=Path, default=Path("data/splits"))
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
 
     create_train_test_dev_split(
         manifest_file=args.manifest_file,
