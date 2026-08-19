@@ -1,65 +1,91 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import anndata as ad
 import pandas as pd
+from typing_extensions import Self
 
 
 class DataSet:
-    def __init__(self, filepath: str | Path) -> None:
-        self.data = self.init_dataset(Path(filepath))
+    """
+        with DataSet(
+            "data/dataset.h5ad",
+            label_column="cell_type",
+            counts_layer="counts",
+        ) as dataset:
+            X = dataset.X()
+            Y = dataset.Y()
+            counts = dataset.counts()
+    """
 
-    def init_dataset(self, filepath: Path) -> None:
-        return ad.read_h5ad(filepath, backed="r")
+    def __init__(
+        self,
+        filepath: str | Path,
+        label_column: str = "cell_type",
+        counts_layer: str | None = None,
+    ) -> None:
+        self.filepath = Path(filepath)
+        self.label_column = label_column
+        self.counts_layer = counts_layer
+        self.data = self._load()
 
-    def X(self):
-        pass
+        self._validate()
 
-    def Y(self):
-        pass
+    def _load(self) -> ad.AnnData:
+        if not self.filepath.exists():
+            raise FileNotFoundError(self.filepath)
 
+        return ad.read_h5ad(self.filepath, backed="r")
 
-MANIFEST_OBS = [
-    "donor_id",
-    "sample_id",
-    "library_id",
-    "institute",
-    "Country",
-    "self_reported_ethnicity",
-    "assay",
-    "tissue",
-    "disease",
-    "author_cell_type",
-    "Annotation_Level1",
-    "Annotation_Level4",
-    "cell_type",
-    "cell_type_ontology_term_id",
-]
+    def _validate(self) -> None:
+        if not self.data.obs_names.is_unique:
+            raise ValueError("Cell IDs must be unique")
 
+        if self.label_column not in self.data.obs:
+            raise ValueError(f"Missing label column: {self.label_column!r}")
 
-class Manifest:
-    def __init__(self, dataset: DataSet | None = None) -> None:
-        self.dataset_obj = dataset
-        self.manifest: pd.DataFrame | None = None
+        if self.counts_layer is not None and self.counts_layer not in self.data.layers:
+            raise ValueError(f"Missing counts layer: {self.counts_layer!r}")
 
-    def init(self) -> None:
-        if self.dataset_obj is None:
-            raise ValueError("A dataset is required to initialize a manifest")
+    def X(self) -> Any:
+        """Active expression matrix: cells x genes."""
+        return self.data.X
 
-        data = self.dataset_obj.data
-        manifest = data.obs[MANIFEST_OBS].copy()
-        manifest.insert(0, "cell_id", data.obs_names)
-        self.manifest = manifest
+    def raw_X(self) -> Any:
+        """Explicit count matrix for count-based models such as scVI"""
+        if self.data.raw is None:
+            raise ValueError("Dataset does not contain data.raw")
 
-    def save(self, filepath: str | Path) -> None:
-        if self.manifest is None:
-            raise ValueError("Manifest has not been initialized or loaded")
+        return self.data.raw.X
 
-        self.manifest.to_csv(Path(filepath), index=False, compression="gzip")
+    def counts(self) -> Any:
+        """Explicit count matrix for count-based models such as scVI."""
+        if self.counts_layer is None:
+            raise ValueError("No counts_layer was configured")
 
-    @classmethod
-    def load(cls, filepath: str | Path) -> Manifest:
-        manifest = cls()
-        manifest.manifest = pd.read_csv(Path(filepath), compression="gzip")
-        return manifest
+        return self.data.layers[self.counts_layer]
+
+    def Y(self) -> pd.Series:
+        """One cell-type label per cell."""
+        labels = self.data.obs[self.label_column].copy()
+        labels.name = "target"
+        return labels
+
+    def close(self) -> None:
+        """Close the backed H5AD file."""
+        self.data.file.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
+
+    def __str__(self) -> str:
+        return (
+            f"DataSet(cells={self.data.n_obs}, "
+            f"genes={self.data.n_vars}, "
+            f"label={self.label_column!r})"
+        )

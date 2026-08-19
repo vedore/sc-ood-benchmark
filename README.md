@@ -85,14 +85,13 @@ Build a split manifest first: one row per cell, with at least:
 
 text
 cell_id
-dataset_or_study
-laboratory_or_site
-protocol_or_chemistry
+institute
+assay
 donor_id
 tissue
-disease_state
-cell_type_original
-cell_type_harmonized
+disease
+author_cell_type
+cell_type
 
 
 Then define these experiments:
@@ -131,8 +130,8 @@ Label harmonization is not cleanup work; it is a central methodological componen
 
 Use:
 
-- original labels preserved in cell_type_original;
-- a documented mapping to cell_type_harmonized;
+- original labels preserved in author_cell_type;
+- a documented mapping to cell_type;
 - at least two annotation levels where possible:
   - coarse: broad immune populations;
   - fine: CD4 naïve, CD4 memory, CD8, Treg, classical/non-classical monocytes, etc.
@@ -293,3 +292,12 @@ python3 notebooks/02_dataset_map.py
 This requires `pandas` and writes a visual `dataset_map.html` plus supporting
 CSV tables to `reports/data_map/`. It reads metadata only, not the `.h5ad`
 expression matrix.
+
+## Donor split
+
+Create a reproducible donor-grouped split for one institute:
+
+```bash
+python3 src/preprocessor/splits.py data/aida_manifest.csv.gz \
+  --institute "Genome Institute of Singapore" --seed 42
+```

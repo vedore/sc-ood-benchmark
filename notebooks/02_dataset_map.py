@@ -18,7 +18,7 @@ import pandas as pd
 # Find the repository root from this script's location.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Use the normalized metadata manifest as the default input.
+# Use the dataset-native metadata manifest as the default input.
 DEFAULT_MANIFEST = REPO_ROOT / "data/aida_manifest.csv.gz"
 
 # Store generated local reports outside both notebooks and source code.
@@ -26,14 +26,13 @@ DEFAULT_OUTPUT_DIR = REPO_ROOT / "reports/data_map"
 
 # Read only the metadata fields needed to map the dataset.
 MANIFEST_COLUMNS = [
-    "dataset_or_study",  # Names the source dataset or study.
-    "laboratory_or_site",  # Names the laboratory or collection site.
+    "institute",  # Names the contributing institute.
     "donor_id",  # Identifies each biological donor.
     "sample_id",  # Identifies each biological sample.
     "library_id",  # Identifies each sequencing library or multiplexed pool.
-    "protocol_or_chemistry",  # Records the assay technology.
+    "assay",  # Records the assay technology.
     "tissue",  # Records the sampled tissue.
-    "cell_type_coarse",  # Provides broad cell-type labels.
+    "Annotation_Level1",  # Provides broad cell-type labels.
 ]
 
 
@@ -91,16 +90,14 @@ def create_tables(manifest: pd.DataFrame) -> dict[str, pd.DataFrame]:
     overview = pd.DataFrame(
         {
             "level": [
-                "datasets",  # Count source datasets.
-                "sites",  # Count laboratories or collection sites.
+                "institutes",  # Count contributing institutes.
                 "donors",  # Count biological donors.
                 "samples",  # Count biological samples.
                 "libraries",  # Count sequencing libraries.
                 "cells",  # Count cell-level manifest rows.
             ],
             "count": [
-                manifest["dataset_or_study"].nunique(),  # Unique datasets.
-                manifest["laboratory_or_site"].nunique(),  # Unique sites.
+                manifest["institute"].nunique(),  # Unique institutes.
                 manifest["donor_id"].nunique(),  # Unique donors.
                 manifest["sample_id"].nunique(),  # Unique samples.
                 manifest["library_id"].nunique(),  # Unique libraries.
@@ -111,14 +108,13 @@ def create_tables(manifest: pd.DataFrame) -> dict[str, pd.DataFrame]:
 
     # Define the ordered columns that describe the nesting structure.
     hierarchy_columns = [
-        "dataset_or_study",  # Highest data level.
-        "laboratory_or_site",  # Domain or site level.
+        "institute",  # Domain or institute level.
         "donor_id",  # Biological grouping level.
         "sample_id",  # Sample level.
         "library_id",  # Sequencing-library level.
     ]
 
-    # Count cells for every observed dataset-site-donor-sample-library path.
+    # Count cells for every observed institute-donor-sample-library path.
     hierarchy = (
         manifest.groupby(
             hierarchy_columns,
@@ -138,26 +134,26 @@ def create_tables(manifest: pd.DataFrame) -> dict[str, pd.DataFrame]:
             number_of_cells=("donor_id", "size"),  # Cells from this donor.
             number_of_samples=("sample_id", "nunique"),  # Donor samples.
             number_of_libraries=("library_id", "nunique"),  # Donor libraries.
-            number_of_sites=("laboratory_or_site", "nunique"),  # Donor sites.
-            number_of_coarse_cell_types=("cell_type_coarse", "nunique"),
+            number_of_institutes=("institute", "nunique"),
+            number_of_annotation_level1=("Annotation_Level1", "nunique"),
             sample_ids=("sample_id", _joined_unique),  # All donor samples.
-            laboratory_or_sites=("laboratory_or_site", _joined_unique),
+            institutes=("institute", _joined_unique),
         )
         .reset_index()  # Restore donor_id as a normal column.
         .sort_values("number_of_cells", ascending=False)  # Largest donors first.
     )
 
-    # Summarize cells, donors, samples, and libraries for every site.
-    site_summary = (
-        manifest.groupby("laboratory_or_site", dropna=False, observed=True)
+    # Summarize cells, donors, samples, and libraries for every institute.
+    institute_summary = (
+        manifest.groupby("institute", dropna=False, observed=True)
         .agg(
-            number_of_cells=("laboratory_or_site", "size"),  # Site cells.
-            number_of_donors=("donor_id", "nunique"),  # Site donors.
-            number_of_samples=("sample_id", "nunique"),  # Site samples.
-            number_of_libraries=("library_id", "nunique"),  # Site libraries.
+            number_of_cells=("institute", "size"),
+            number_of_donors=("donor_id", "nunique"),
+            number_of_samples=("sample_id", "nunique"),
+            number_of_libraries=("library_id", "nunique"),
         )
-        .reset_index()  # Restore the site identifier as a normal column.
-        .sort_values("number_of_cells", ascending=False)  # Largest sites first.
+        .reset_index()
+        .sort_values("number_of_cells", ascending=False)
     )
 
     # Count missing entries and calculate their percentage for every column.
@@ -169,17 +165,17 @@ def create_tables(manifest: pd.DataFrame) -> dict[str, pd.DataFrame]:
         }
     ).sort_values("missing_percent", ascending=False)
 
-    # Count every coarse cell type within each laboratory or site.
-    cell_type_by_site = pd.crosstab(
-        manifest["laboratory_or_site"],  # Create one row per site.
-        manifest["cell_type_coarse"],  # Create one column per cell type.
+    # Count every level-1 annotation within each institute.
+    annotation_level1_by_institute = pd.crosstab(
+        manifest["institute"],
+        manifest["Annotation_Level1"],
         dropna=False,  # Preserve missing categories when pandas supports them.
     )
 
-    # Convert site cell-type counts into within-site percentages.
-    cell_type_percent_by_site = cell_type_by_site.div(
-        cell_type_by_site.sum(axis=1),  # Calculate the total cells per site.
-        axis=0,  # Divide each row by its own site total.
+    # Convert annotation counts into within-institute percentages.
+    annotation_level1_percent_by_institute = annotation_level1_by_institute.div(
+        annotation_level1_by_institute.sum(axis=1),
+        axis=0,
     ).mul(100)
 
     # Count the number of donors associated with each sample identifier.
@@ -194,22 +190,22 @@ def create_tables(manifest: pd.DataFrame) -> dict[str, pd.DataFrame]:
         sample_donor_counts > 1
     ].reset_index()
 
-    # Summarize how many samples, donors, and sites occur in each library.
+    # Summarize how many samples, donors, and institutes occur in each library.
     library_summary = (
         manifest.groupby("library_id", dropna=False, observed=True)
         .agg(
             number_of_samples=("sample_id", "nunique"),  # Multiplexed samples.
             number_of_donors=("donor_id", "nunique"),  # Multiplexed donors.
-            number_of_sites=("laboratory_or_site", "nunique"),  # Sites/library.
+            number_of_institutes=("institute", "nunique"),
         )
         .reset_index()  # Restore library_id as a normal column.
         .sort_values("number_of_samples", ascending=False)  # Largest pools first.
     )
 
-    # Select donors observed at more than one laboratory or site.
-    multi_site_donors = donor_summary.loc[
-        donor_summary["number_of_sites"] > 1,
-        ["donor_id", "number_of_sites", "laboratory_or_sites"],
+    # Select donors observed at more than one institute.
+    multi_institute_donors = donor_summary.loc[
+        donor_summary["number_of_institutes"] > 1,
+        ["donor_id", "number_of_institutes", "institutes"],
     ]
 
     # Give every aggregate table a stable name for export and reporting.
@@ -217,13 +213,15 @@ def create_tables(manifest: pd.DataFrame) -> dict[str, pd.DataFrame]:
         "overview": overview,
         "dataset_hierarchy": hierarchy,
         "donor_summary": donor_summary,
-        "site_summary": site_summary,
+        "institute_summary": institute_summary,
         "missing_values": missing_values,
-        "coarse_cell_type_by_site": cell_type_by_site.reset_index(),
-        "coarse_cell_type_percent_by_site": cell_type_percent_by_site.reset_index(),
+        "annotation_level1_by_institute": annotation_level1_by_institute.reset_index(),
+        "annotation_level1_percent_by_institute": (
+            annotation_level1_percent_by_institute.reset_index()
+        ),
         "sample_donor_conflicts": sample_donor_conflicts,
         "library_summary": library_summary,
-        "multi_site_donors": multi_site_donors,
+        "multi_institute_donors": multi_institute_donors,
     }
 
 
@@ -278,7 +276,7 @@ def _visual_table(
 def save_html_report(tables: dict[str, pd.DataFrame], output_dir: Path) -> None:
     """Create one self-contained visual HTML report from aggregate tables."""
 
-    # Render the six hierarchy totals as summary cards.
+    # Render the hierarchy totals as summary cards.
     overview_cards = "".join(
         '<div class="card">'
         f'<span>{escape(str(row.level))}</span>'
@@ -287,9 +285,9 @@ def save_html_report(tables: dict[str, pd.DataFrame], output_dir: Path) -> None:
         for row in tables["overview"].itertuples(index=False)
     )
 
-    # Display all sites and scale each count column independently.
-    site_html = _visual_table(
-        tables["site_summary"],
+    # Display all institutes and scale each count column independently.
+    institute_html = _visual_table(
+        tables["institute_summary"],
         [
             "number_of_cells",
             "number_of_donors",
@@ -298,20 +296,20 @@ def save_html_report(tables: dict[str, pd.DataFrame], output_dir: Path) -> None:
         ],
     )
 
-    # Display cell-type percentages with a common zero-to-100 scale.
-    cell_type_table = tables["coarse_cell_type_percent_by_site"]
+    # Display annotation percentages with a common zero-to-100 scale.
+    annotation_table = tables["annotation_level1_percent_by_institute"]
 
-    # Identify every percentage column while excluding the site label.
-    cell_type_columns = [
+    # Identify every percentage column while excluding the institute label.
+    annotation_columns = [
         column
-        for column in cell_type_table.columns
-        if column != "laboratory_or_site"
+        for column in annotation_table.columns
+        if column != "institute"
     ]
 
-    # Add percentage bars to the site-by-cell-type table.
-    cell_type_html = _visual_table(
-        cell_type_table,
-        cell_type_columns,
+    # Add percentage bars to the institute-by-annotation table.
+    annotation_html = _visual_table(
+        annotation_table,
+        annotation_columns,
         fixed_maximum=100,
     )
 
@@ -322,7 +320,7 @@ def save_html_report(tables: dict[str, pd.DataFrame], output_dir: Path) -> None:
             "number_of_cells",
             "number_of_samples",
             "number_of_libraries",
-            "number_of_coarse_cell_types",
+            "number_of_annotation_level1",
         ]
     ]
 
@@ -333,7 +331,7 @@ def save_html_report(tables: dict[str, pd.DataFrame], output_dir: Path) -> None:
             "number_of_cells",
             "number_of_samples",
             "number_of_libraries",
-            "number_of_coarse_cell_types",
+            "number_of_annotation_level1",
         ],
     )
 
@@ -343,12 +341,12 @@ def save_html_report(tables: dict[str, pd.DataFrame], output_dir: Path) -> None:
             "relationship": [
                 "Sample IDs assigned to multiple donors",
                 "Multiplexed libraries containing multiple samples",
-                "Donors associated with multiple sites",
+                "Donors associated with multiple institutes",
             ],
             "count": [
                 len(tables["sample_donor_conflicts"]),
                 int((tables["library_summary"]["number_of_samples"] > 1).sum()),
-                len(tables["multi_site_donors"]),
+                len(tables["multi_institute_donors"]),
             ],
         }
     )
@@ -373,7 +371,7 @@ def save_html_report(tables: dict[str, pd.DataFrame], output_dir: Path) -> None:
            padding: 32px; color: #172033; background: #f8fafc; }
     h1, h2 { color: #0f172a; } h2 { margin-top: 38px; }
     .note { color: #475569; }
-    .hierarchy { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+    .hierarchy { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
     .card { padding: 18px 12px; border-radius: 10px; background: white;
             box-shadow: 0 1px 4px #cbd5e1; text-align: center; }
     .card span { display: block; color: #64748b; text-transform: capitalize; }
@@ -394,20 +392,20 @@ def save_html_report(tables: dict[str, pd.DataFrame], output_dir: Path) -> None:
         style,
         "</style></head><body>",
         "<h1>Dataset metadata map</h1>",
-        '<p class="note">Dataset → site → donor → sample → library → cells. '
+        '<p class="note">Institute → donor → sample → library → cells. '
         "Only metadata is used.</p>",
         f'<div class="hierarchy">{overview_cards}</div>',
-        '<h2>Sites</h2><div class="table-wrap">',
-        site_html,
+        '<h2>Institutes</h2><div class="table-wrap">',
+        institute_html,
         "</div>",
-        '<h2>Coarse cell types by site (%)</h2><div class="table-wrap">',
-        cell_type_html,
+        '<h2>Annotation Level 1 by institute (%)</h2><div class="table-wrap">',
+        annotation_html,
         "</div>",
         '<h2>Largest 25 donors</h2><div class="table-wrap">',
         donor_html,
         "</div>",
         "<h2>Relationship audit</h2>",
-        '<p class="note">Multiplexed libraries and multi-site donors may be valid. '
+        '<p class="note">Multiplexed libraries and multi-institute donors may be valid. '
         "They are reported so future split decisions remain explicit.</p>",
         f'<div class="table-wrap">{audit_html}</div>',
         f'<h2>Missing metadata</h2><div class="table-wrap">{missing_html}</div>',
@@ -433,7 +431,7 @@ def create_data_map(
     # Create the output directory and any missing parent directories.
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load and validate the normalized metadata manifest.
+    # Load and validate the dataset-native metadata manifest.
     manifest = load_manifest(manifest_file)
 
     # Calculate every aggregate map and relationship audit.
@@ -457,7 +455,7 @@ def create_data_map(
         f"{len(tables['sample_donor_conflicts'])} samples across donors, "
         f"{int((tables['library_summary']['number_of_samples'] > 1).sum())} "
         "multiplexed libraries, "
-        f"{len(tables['multi_site_donors'])} donors across sites"
+        f"{len(tables['multi_institute_donors'])} donors across institutes"
     )
 
 

@@ -13,8 +13,8 @@ reproducibility over convenience.
 
 - `README.md`: benchmark motivation, experimental design, and roadmap.
 - `src/main.py`: current end-to-end entry point.
-- `src/manifest.py`: extracts cell metadata from an `.h5ad` file.
-- `src/train_test_dev_split_data.py`: creates donor-grouped splits and loads
+- `src/preprocessor/manifest.py`: extracts cell metadata from an `.h5ad` file.
+- `src/preprocessor/splits.py`: creates donor-grouped splits and loads
   AnnData views for each split.
 - `data/`: local datasets, generated manifests, and split files. Treat large
   data as local artifacts unless explicitly asked to version them.
