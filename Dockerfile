@@ -23,7 +23,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/src
 
 USER benchmark
-ENTRYPOINT ["python", "src/benchmark.py"]
+CMD ["/bin/bash"]
 
 FROM base AS cpu
 

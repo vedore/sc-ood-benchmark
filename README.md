@@ -343,30 +343,29 @@ Build the current CPU benchmark image:
 docker build --target cpu -t sc-ood-benchmark:cpu .
 ```
 
-Run it with the local data and output directories mounted:
+Start an interactive shell with the repository mounted. Changes made in the
+host repository are immediately visible inside `/app`:
 
 ```bash
-docker run --rm \
+docker run --rm -it \
   --user "$(id -u):$(id -g)" \
-  -v "$PWD/data:/app/data" \
-  -v "$PWD/runs:/app/runs" \
+  -v "$PWD:/app" \
   sc-ood-benchmark:cpu
 ```
+
+Run the benchmark from inside the container with `python src/benchmark.py`.
 
 For future scVI or PyTorch-based representations, build the CUDA target. It
 adds `scvi-tools` and its CUDA-enabled dependencies:
 
 ```bash
 docker build --platform linux/amd64 --target cuda -t sc-ood-benchmark:cuda .
-docker run --rm --gpus all \
+docker run --rm -it --gpus all \
   --user "$(id -u):$(id -g)" \
-  -v "$PWD/data:/app/data" \
-  -v "$PWD/runs:/app/runs" \
+  -v "$PWD:/app" \
   sc-ood-benchmark:cuda
 ```
 
 The CUDA image uses PyTorch's CUDA 12.8 wheels. Running it requires Linux AMD64,
 an NVIDIA GPU with a compatible driver, and the NVIDIA Container Toolkit. CUDA
 does not accelerate the current PCA/scikit-learn benchmark.
-Override benchmark arguments by appending them to either `docker run` command,
-for example `--incremental --batch-size 2048`.
