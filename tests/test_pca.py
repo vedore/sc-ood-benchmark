@@ -45,6 +45,25 @@ class PCARepresentationTest(unittest.TestCase):
             finally:
                 backed.file.close()
 
+    def test_fit_and_transform_backed_view(self) -> None:
+        with TemporaryDirectory() as directory:
+            data_file = Path(directory) / "data.h5ad"
+            self.adata.write_h5ad(data_file)
+            backed = ad.read_h5ad(data_file, backed="r")
+            try:
+                train = backed[:40, :]
+                representation = PCARepresentation(
+                    n_hvgs=10,
+                    n_components=3,
+                    batch_size=11,
+                ).fit(train)
+                embeddings = representation.transform(train)
+
+                self.assertEqual(embeddings.matrix.shape, (40, 3))
+                self.assertTrue(embeddings.cell_ids.equals(train.obs_names))
+            finally:
+                backed.file.close()
+
     def test_transform_requires_fit(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "has not been fitted"):
             PCARepresentation().transform(self.adata)

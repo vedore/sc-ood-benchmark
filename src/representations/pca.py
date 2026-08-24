@@ -125,7 +125,11 @@ class PCARepresentation(BaseRepresentation):
             for start, end in self._batch_slices(
                 train.n_obs, minimum_size=self.n_components
             ):
-                batch = self._get_expression_matrix(train[start:end, :], self.gene_ids_)
+                batch = self._get_expression_matrix(
+                    train,
+                    self.gene_ids_,
+                    row_slice=slice(start, end),
+                )
                 model.partial_fit(self._as_dense(batch))
             self.pca_ = model
             return self
@@ -153,7 +157,11 @@ class PCARepresentation(BaseRepresentation):
             raise ValueError("Output matrix has the wrong shape")
 
         for start, end in self._batch_slices(data.n_obs):
-            batch = self._get_expression_matrix(data[start:end, :], self.gene_ids_)
+            batch = self._get_expression_matrix(
+                data,
+                self.gene_ids_,
+                row_slice=slice(start, end),
+            )
             if isinstance(self.pca_, IncrementalPCA):
                 batch = self._as_dense(batch)
             output[start:end] = self.pca_.transform(batch).astype(
@@ -249,8 +257,12 @@ class PCARepresentation(BaseRepresentation):
         if usable_genes.empty:
             raise ValueError("No usable genes remain for HVG selection")
 
+        hvg_data = ad.AnnData(
+            X=self._get_expression_matrix(train, usable_genes),
+            var=train.var.loc[usable_genes].copy(),
+        )
         hvg_stats = sc.pp.highly_variable_genes(
-            train[:, usable_genes],
+            hvg_data,
             n_top_genes=self.n_hvgs,
             flavor="seurat",
             subset=False,
@@ -279,12 +291,19 @@ class PCARepresentation(BaseRepresentation):
     def _get_expression_matrix(
         data: ad.AnnData,
         gene_ids: pd.Index,
+        row_slice: slice = slice(None),
     ) -> Any:
         missing = gene_ids.difference(data.var_names)
         if not missing.empty:
             raise ValueError(f"Missing {len(missing)} PCA genes")
 
-        matrix = data[:, gene_ids].X
+        if data.isbacked and data.is_view:
+            # Backed AnnData forbids view-of-view indexing. Resolve the stable
+            # cell and gene IDs against the original object in one operation.
+            source = data._adata_ref
+            matrix = source[data.obs_names[row_slice], gene_ids].X
+        else:
+            matrix = data[row_slice, gene_ids].X
         if hasattr(matrix, "to_memory"):
             matrix = matrix.to_memory()
         if sparse.issparse(matrix):
