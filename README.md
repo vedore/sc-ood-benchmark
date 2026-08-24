@@ -301,3 +301,72 @@ Create a reproducible donor-grouped split for one institute:
 python3 src/preprocessor/splits.py data/aida_manifest.csv.gz \
   --institute "Genome Institute of Singapore" --seed 42
 ```
+
+## PCA benchmark
+
+Run with the default dataset and split paths:
+
+```bash
+python3 src/benchmark.py
+```
+
+Override paths when needed:
+
+```bash
+python3 src/benchmark.py \
+  --adata-file data/dataset.h5ad \
+  --split-file data/splits/experiment.csv.gz \
+  --cache-dir data/cache \
+  --runs-dir runs \
+  --splits dev test
+```
+
+Pass `--incremental` to use approximate incremental PCA.
+Use `--batch-size N` to select a batch size or `--no-batching` to process each
+split in one batch. Exact PCA fitting is unbatched in either case.
+
+Each run creates a timestamped directory under `runs/`. It contains `pca.pkl`,
+`logistic_regression.pkl`, `metrics.csv`, `timings.csv`, `run.json`, and the
+split manifest. Live progress is printed in the terminal and saved to
+`benchmark.log`; use `--log-level WARNING` for quieter output. Each evaluated
+split contains `embeddings.npy`,
+`cell_ids.csv.gz`, and `predictions.csv.gz`. Train embeddings are always saved
+because the logistic regression is fitted on train labels. PCA fitting and HVG
+selection also use train cells only; `--splits` controls evaluation outputs.
+`metrics.csv` contains both split-level and donor-level macro-F1 and accuracy.
+
+## Docker
+
+Build the current CPU benchmark image:
+
+```bash
+docker build --target cpu -t sc-ood-benchmark:cpu .
+```
+
+Run it with the local data and output directories mounted:
+
+```bash
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -v "$PWD/data:/app/data" \
+  -v "$PWD/runs:/app/runs" \
+  sc-ood-benchmark:cpu
+```
+
+For future scVI or PyTorch-based representations, build the CUDA target. It
+adds `scvi-tools` and its CUDA-enabled dependencies:
+
+```bash
+docker build --platform linux/amd64 --target cuda -t sc-ood-benchmark:cuda .
+docker run --rm --gpus all \
+  --user "$(id -u):$(id -g)" \
+  -v "$PWD/data:/app/data" \
+  -v "$PWD/runs:/app/runs" \
+  sc-ood-benchmark:cuda
+```
+
+The CUDA image uses PyTorch's CUDA 12.8 wheels. Running it requires Linux AMD64,
+an NVIDIA GPU with a compatible driver, and the NVIDIA Container Toolkit. CUDA
+does not accelerate the current PCA/scikit-learn benchmark.
+Override benchmark arguments by appending them to either `docker run` command,
+for example `--incremental --batch-size 2048`.

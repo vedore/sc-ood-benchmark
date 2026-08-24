@@ -1,0 +1,2 @@
+-r requirements.txt
+scvi-tools[cuda]==1.5.0.post1

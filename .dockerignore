@@ -1,0 +1,16 @@
+.git
+.agents
+.codex
+.venv
+venv
+__pycache__
+.pytest_cache
+*.py[codz]
+data
+runs
+reports
+checkpoints
+models
+logs
+notebooks
+tests

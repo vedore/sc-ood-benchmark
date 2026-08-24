@@ -8,7 +8,6 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 
-
 REQUIRED_COLUMNS = ("cell_id", "donor_id", "institute")
 SPLIT_NAMES = ("train", "dev", "test")
 ALLOWED_SPLITS = (*SPLIT_NAMES, "excluded")

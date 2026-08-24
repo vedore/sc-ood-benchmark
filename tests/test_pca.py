@@ -49,6 +49,41 @@ class PCARepresentationTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "has not been fitted"):
             PCARepresentation().transform(self.adata)
 
+    def test_save_and_load_round_trip(self) -> None:
+        with TemporaryDirectory() as directory:
+            model_file = Path(directory) / "pca.pkl"
+            representation = PCARepresentation(
+                n_hvgs=10,
+                n_components=3,
+                batch_size=7,
+            ).fit(self.adata)
+            expected = representation.transform(self.adata)
+
+            representation.save(model_file)
+            loaded = PCARepresentation.load(model_file)
+            actual = loaded.transform(self.adata)
+
+            self.assertTrue(loaded.gene_ids_.equals(representation.gene_ids_))
+            np.testing.assert_allclose(actual.matrix, expected.matrix)
+            self.assertTrue(actual.cell_ids.equals(expected.cell_ids))
+
+    def test_save_requires_fit(self) -> None:
+        with TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, "has not been fitted"):
+                PCARepresentation().save(Path(directory) / "pca.pkl")
+
+    def test_batching_can_be_disabled(self) -> None:
+        representation = PCARepresentation(
+            n_hvgs=10,
+            n_components=3,
+            batch_size=None,
+        )
+        representation.fit(self.adata)
+        embeddings = representation.transform(self.adata)
+
+        self.assertEqual(embeddings.matrix.shape, (60, 3))
+        self.assertEqual(list(representation._batch_slices(60)), [(0, 60)])
+
 
 if __name__ == "__main__":
     unittest.main()
