@@ -15,6 +15,7 @@ from metrics import compute_classification_metrics, summarize_donor_metrics
 from preprocessor.dataset import DataSet
 from preprocessor.splits import SPLIT_NAMES, create_split_views
 from representations.pca import PCARepresentation
+from preprocessor.standard_scaler import StandardScaler
 
 LOGGER = logging.getLogger("sc_ood_benchmark")
 
@@ -124,6 +125,11 @@ def run_pca_benchmark(
         if train_labels.isna().any():
             raise ValueError("Missing train labels")
 
+        scaler = StandardScaler()
+        train_matrix = scaler.fit_transform(train_matrix)
+        scaler.save(run_dir / "scaler.pkl")
+        LOGGER.info("Saved standard scaler")
+
         classifier = LogisticRegressionClassifier(
             {"max_iter": 1000, "random_state": 42}
         )
@@ -152,6 +158,7 @@ def run_pca_benchmark(
             split_labels = labels.reindex(cell_ids)
             if split_labels.isna().any():
                 raise ValueError(f"Missing {name} labels")
+            matrix = scaler.transform(matrix)
 
             LOGGER.info("Evaluating %s split", name)
             started_at = perf_counter()
@@ -228,6 +235,7 @@ def run_pca_benchmark(
             "n_components": representation.n_components,
             "seed": representation.seed,
         },
+        "scaler": {"type": "StandardScaler"},
         "classifier": {
             "type": "LogisticRegressionClassifier",
             "config": classifier.config,
@@ -283,6 +291,9 @@ def run_linear_model_sweep(
     if train_labels.isna().any():
         raise ValueError("Missing train labels")
 
+    scaler = StandardScaler()
+    train_matrix = scaler.fit_transform(train_matrix)
+
     eval_data = {}
     for name in eval_splits:
         matrix, cell_ids = _load_embeddings(run_dir / name)
@@ -292,7 +303,7 @@ def run_linear_model_sweep(
         donor_ids = donor_by_cell.reindex(cell_ids)
         if donor_ids.isna().any():
             raise ValueError(f"Missing {name} donor IDs")
-        eval_data[name] = (matrix, cell_ids, split_labels, donor_ids)
+        eval_data[name] = (scaler.transform(matrix), cell_ids, split_labels, donor_ids)
 
     metric_rows: list[dict[str, object]] = []
     for model_name, config in model_configs.items():
