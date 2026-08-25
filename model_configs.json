@@ -1,0 +1,28 @@
+{
+  "C0.1_l2": {
+    "C": 0.1,
+    "l1_ratio": 0.0,
+    "max_iter": 1000,
+    "random_state": 42
+  },
+  "C1_l2": {
+    "C": 1.0,
+    "l1_ratio": 0.0,
+    "max_iter": 1000,
+    "random_state": 42
+  },
+  "C1_balanced": {
+    "C": 1.0,
+    "l1_ratio": 0.0,
+    "max_iter": 1000,
+    "random_state": 42,
+    "class_weight": "balanced"
+  },
+  "C1_l1": {
+    "C": 1.0,
+    "l1_ratio": 1.0,
+    "max_iter": 1000,
+    "random_state": 42,
+    "solver": "saga"
+  }
+}

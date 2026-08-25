@@ -2,7 +2,7 @@ import argparse
 import json
 import logging
 import shutil
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from classifiers.linear import LogisticRegressionClassifier
-from metrics import compute_classification_metrics
+from metrics import compute_classification_metrics, summarize_donor_metrics
 from preprocessor.dataset import DataSet
 from preprocessor.splits import SPLIT_NAMES, create_split_views
 from representations.pca import PCARepresentation
@@ -24,6 +24,7 @@ DEFAULT_SPLIT_FILE = Path(
     "within_institute_donor__"
     "institute-genome-institute-of-singapore__seed-42.csv.gz"
 )
+DEFAULT_MANIFEST_FILE = Path("data/aida_manifest.csv.gz")
 
 
 def run_pca_benchmark(
@@ -171,11 +172,13 @@ def run_pca_benchmark(
             donor_ids = donor_by_cell.reindex(cell_ids)
             if donor_ids.isna().any():
                 raise ValueError(f"Missing {name} donor IDs")
+            donor_results = []
             for donor_id in donor_ids.drop_duplicates():
                 donor_mask = donor_ids.eq(donor_id).to_numpy()
                 donor_result = compute_classification_metrics(
                     split_labels.to_numpy()[donor_mask], predictions[donor_mask]
                 )
+                donor_results.append(donor_result)
                 metric_rows.append(
                     {
                         "split": name,
@@ -185,6 +188,16 @@ def run_pca_benchmark(
                         **donor_result,
                     }
                 )
+            donor_summary = summarize_donor_metrics(donor_results)
+            metric_rows.append(
+                {
+                    "split": name,
+                    "aggregation": "donor_mean",
+                    "donor_id": "",
+                    "n_cells": len(cell_ids),
+                    **donor_summary,
+                }
+            )
             pd.DataFrame(
                 {
                     "cell_id": cell_ids,
@@ -228,6 +241,120 @@ def run_pca_benchmark(
     pd.DataFrame(timings).to_csv(run_dir / "timings.csv", index=False)
     LOGGER.info("Benchmark complete; artifacts saved to %s", run_dir)
     return run_dir
+
+
+def run_linear_model_sweep(
+    run_dir: str | Path,
+    model_configs: Mapping[str, dict],
+    manifest_file: str | Path = DEFAULT_MANIFEST_FILE,
+    label_column: str = "cell_type",
+    eval_splits: Sequence[str] = ("dev", "test"),
+) -> Path:
+    """Compare logistic-regression configs on embeddings already cached in `run_dir`.
+
+    Reuses the `train`/`dev`/`test` embeddings written by `run_pca_benchmark`
+    instead of refitting PCA. Labels are read from the manifest file (not the
+    `.h5ad`), keyed by `cell_id`, so no expression data is touched.
+    """
+    run_dir = Path(run_dir)
+    if not model_configs:
+        raise ValueError("At least one model config must be provided")
+
+    split_manifest = pd.read_csv(
+        run_dir / "split_manifest.csv.gz",
+        usecols=["cell_id", "donor_id"],
+        dtype={"cell_id": str},
+        compression="gzip",
+    )
+    donor_by_cell = split_manifest.set_index("cell_id")["donor_id"]
+
+    manifest = pd.read_csv(
+        manifest_file,
+        usecols=["cell_id", label_column],
+        dtype={"cell_id": str},
+        compression="gzip",
+    )
+    if manifest["cell_id"].duplicated().any():
+        raise ValueError("Manifest contains duplicate cell IDs")
+    labels_by_cell = manifest.set_index("cell_id")[label_column]
+
+    train_matrix, train_cell_ids = _load_embeddings(run_dir / "train")
+    train_labels = labels_by_cell.reindex(train_cell_ids)
+    if train_labels.isna().any():
+        raise ValueError("Missing train labels")
+
+    eval_data = {}
+    for name in eval_splits:
+        matrix, cell_ids = _load_embeddings(run_dir / name)
+        split_labels = labels_by_cell.reindex(cell_ids)
+        if split_labels.isna().any():
+            raise ValueError(f"Missing {name} labels")
+        donor_ids = donor_by_cell.reindex(cell_ids)
+        if donor_ids.isna().any():
+            raise ValueError(f"Missing {name} donor IDs")
+        eval_data[name] = (matrix, cell_ids, split_labels, donor_ids)
+
+    metric_rows: list[dict[str, object]] = []
+    for model_name, config in model_configs.items():
+        LOGGER.info("Fitting linear model %r", model_name)
+        classifier = LogisticRegressionClassifier(config)
+        classifier.fit(train_matrix, train_labels.to_numpy())
+
+        for name, (matrix, cell_ids, split_labels, donor_ids) in eval_data.items():
+            predictions = classifier.predict(matrix)
+            result = compute_classification_metrics(
+                split_labels.to_numpy(), predictions
+            )
+            metric_rows.append(
+                {
+                    "model": model_name,
+                    "split": name,
+                    "aggregation": "split",
+                    "donor_id": "",
+                    "n_cells": len(cell_ids),
+                    **result,
+                }
+            )
+            donor_results = []
+            for donor_id in donor_ids.drop_duplicates():
+                donor_mask = donor_ids.eq(donor_id).to_numpy()
+                donor_result = compute_classification_metrics(
+                    split_labels.to_numpy()[donor_mask], predictions[donor_mask]
+                )
+                donor_results.append(donor_result)
+                metric_rows.append(
+                    {
+                        "model": model_name,
+                        "split": name,
+                        "aggregation": "donor",
+                        "donor_id": donor_id,
+                        "n_cells": int(donor_mask.sum()),
+                        **donor_result,
+                    }
+                )
+            donor_summary = summarize_donor_metrics(donor_results)
+            metric_rows.append(
+                {
+                    "model": model_name,
+                    "split": name,
+                    "aggregation": "donor_mean",
+                    "donor_id": "",
+                    "n_cells": len(cell_ids),
+                    **donor_summary,
+                }
+            )
+            LOGGER.info(
+                "%s / %s metrics: macro_f1=%.4f accuracy=%.4f",
+                model_name,
+                name,
+                result["macro_f1"],
+                result["accuracy"],
+            )
+
+    output_file = run_dir / "linear_model_sweep.csv"
+    pd.DataFrame(metric_rows).to_csv(output_file, index=False)
+    LOGGER.info("Linear model sweep complete; results saved to %s", output_file)
+    return output_file
 
 
 def _configure_logging(run_dir: Path, log_level: str) -> None:
@@ -324,22 +451,60 @@ def _parse_args() -> argparse.Namespace:
         default="INFO",
         help="Terminal and file logging level (default: INFO).",
     )
+
+    subparsers = parser.add_subparsers(dest="command")
+    sweep_parser = subparsers.add_parser(
+        "sweep",
+        help=(
+            "Reuse cached embeddings from an existing run directory to "
+            "compare logistic-regression configs, without refitting PCA."
+        ),
+    )
+    sweep_parser.add_argument(
+        "--run-dir", type=Path, required=True, help="Existing run directory."
+    )
+    sweep_parser.add_argument(
+        "--model-configs",
+        type=Path,
+        required=True,
+        help="JSON file mapping model name to LogisticRegression config overrides.",
+    )
+    sweep_parser.add_argument("--manifest-file", type=Path, default=DEFAULT_MANIFEST_FILE)
+    sweep_parser.add_argument("--label-column", default="cell_type")
+    sweep_parser.add_argument(
+        "--splits",
+        nargs="+",
+        default=["dev", "test"],
+        help="Splits to evaluate (default: dev test); train is always the fit split.",
+    )
+
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
     try:
-        run_pca_benchmark(
-            adata_file=args.adata_file,
-            split_file=args.split_file,
-            cache_dir=args.cache_dir,
-            runs_dir=args.runs_dir,
-            batch_size=None if args.no_batching else args.batch_size,
-            incremental=args.incremental,
-            split_names=args.splits,
-            log_level=args.log_level,
-        )
+        if getattr(args, "command", None) == "sweep":
+            with args.model_configs.open("r", encoding="utf-8") as file:
+                model_configs = json.load(file)
+            run_linear_model_sweep(
+                run_dir=args.run_dir,
+                model_configs=model_configs,
+                manifest_file=args.manifest_file,
+                label_column=args.label_column,
+                eval_splits=args.splits,
+            )
+        else:
+            run_pca_benchmark(
+                adata_file=args.adata_file,
+                split_file=args.split_file,
+                cache_dir=args.cache_dir,
+                runs_dir=args.runs_dir,
+                batch_size=None if args.no_batching else args.batch_size,
+                incremental=args.incremental,
+                split_names=args.splits,
+                log_level=args.log_level,
+            )
     except Exception:
         LOGGER.exception("Benchmark failed")
         raise

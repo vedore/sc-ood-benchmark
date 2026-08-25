@@ -333,7 +333,48 @@ split contains `embeddings.npy`,
 `cell_ids.csv.gz`, and `predictions.csv.gz`. Train embeddings are always saved
 because the logistic regression is fitted on train labels. PCA fitting and HVG
 selection also use train cells only; `--splits` controls evaluation outputs.
-`metrics.csv` contains both split-level and donor-level macro-F1 and accuracy.
+`metrics.csv` has one row per `(split, aggregation)`, distinguished by the
+`aggregation` column:
+
+- `split` — macro-F1/accuracy pooled over every cell in the split.
+- `donor` — macro-F1/accuracy computed separately per donor, over whatever
+  cell types appear in that donor's own true/predicted labels (a cell type
+  the donor simply lacks is not counted as an error).
+- `donor_mean` — mean and standard deviation of the `donor` rows' macro-F1
+  and accuracy for that split (`macro_f1_std`, `accuracy_std`, `n_donors`;
+  std is `NaN` for a single donor). This is the donor-level summary to use
+  for comparing representations/models, per the cell-independence caveat in
+  `AGENTS.md`; the pooled `split` row can be dominated by large donors.
+
+## Linear model sweep
+
+Reuse cached embeddings from an existing run directory to compare
+logistic-regression configs without refitting PCA:
+
+```bash
+python3 src/benchmark.py sweep \
+  --run-dir runs/<experiment>__<timestamp> \
+  --model-configs model_configs.json \
+  --splits dev test
+```
+
+`model_configs.json` maps a model name to `LogisticRegressionClassifier`
+config overrides, e.g.:
+
+```json
+{
+  "C1_l2": {"C": 1.0, "l1_ratio": 0.0, "max_iter": 1000, "random_state": 42},
+  "C1_l1": {"C": 1.0, "l1_ratio": 1.0, "max_iter": 1000, "random_state": 42, "solver": "saga"}
+}
+```
+
+`l1_ratio` selects the penalty mix (`0.0` = L2, `1.0` = L1, in between =
+elastic-net); L1/elastic-net require `solver: "saga"`, which is much slower
+than the default `lbfgs`. Labels come from `--manifest-file` (default
+`data/aida_manifest.csv.gz`) keyed by `cell_id`, so the `.h5ad` is never
+read. Fits on `train` embeddings already in `--run-dir`; results are written
+to `<run-dir>/linear_model_sweep.csv` with the same schema as `metrics.csv`
+plus a `model` column.
 
 ## Docker
 
