@@ -346,10 +346,12 @@ selection also use train cells only; `--splits` controls evaluation outputs.
   for comparing representations/models, per the cell-independence caveat in
   `AGENTS.md`; the pooled `split` row can be dominated by large donors.
 
-## Linear model sweep
+## Model sweep
 
-Reuse cached embeddings from an existing run directory to compare
-logistic-regression configs without refitting PCA:
+Reuse cached embeddings from an existing run directory (produced by a prior
+`run_pca_benchmark` run, so `train`/`dev`/`test` embeddings and
+`split_manifest.csv.gz` already exist there) to compare classifier configs
+without refitting PCA:
 
 ```bash
 python3 src/benchmark.py sweep \
@@ -358,13 +360,16 @@ python3 src/benchmark.py sweep \
   --splits dev test
 ```
 
-`model_configs.json` maps a model name to `LogisticRegressionClassifier`
-config overrides, e.g.:
+`model_configs.json` maps a model name to a config dict. Each dict may set
+`classifier` (`logistic_regression` or `knn`; default `logistic_regression`);
+remaining keys are passed through as that classifier's config, e.g.:
 
 ```json
 {
-  "C1_l2": {"C": 1.0, "l1_ratio": 0.0, "max_iter": 1000, "random_state": 42},
-  "C1_l1": {"C": 1.0, "l1_ratio": 1.0, "max_iter": 1000, "random_state": 42, "solver": "saga"}
+  "C1_l2": {"classifier": "logistic_regression", "C": 1.0, "l1_ratio": 0.0, "max_iter": 1000, "random_state": 42},
+  "C1_l1": {"classifier": "logistic_regression", "C": 1.0, "l1_ratio": 1.0, "max_iter": 1000, "random_state": 42, "solver": "saga"},
+  "knn_k5": {"classifier": "knn", "n_neighbors": 5},
+  "knn_k15_distance": {"classifier": "knn", "n_neighbors": 15, "weights": "distance"}
 }
 ```
 
@@ -372,9 +377,10 @@ config overrides, e.g.:
 elastic-net); L1/elastic-net require `solver: "saga"`, which is much slower
 than the default `lbfgs`. Labels come from `--manifest-file` (default
 `data/aida_manifest.csv.gz`) keyed by `cell_id`, so the `.h5ad` is never
-read. Fits on `train` embeddings already in `--run-dir`; results are written
-to `<run-dir>/linear_model_sweep.csv` with the same schema as `metrics.csv`
-plus a `model` column.
+read. Every config fits on the same `train` embeddings already in
+`--run-dir`; results are written to `<run-dir>/model_sweep.csv` with the same
+schema as `metrics.csv` plus a `model` column, so all classifiers/configs are
+directly comparable in one file.
 
 ## Docker
 
@@ -410,3 +416,18 @@ docker run --rm -it --gpus all \
 The CUDA image uses PyTorch's CUDA 12.8 wheels. Running it requires Linux AMD64,
 an NVIDIA GPU with a compatible driver, and the NVIDIA Container Toolkit. CUDA
 does not accelerate the current PCA/scikit-learn benchmark.
+
+
+## Gaps, in a sensible build order:
+
+1. kNN classifier head — README requires two annotation heads (linear probe and kNN) to distinguish "representation transferred better" from "we trained a stronger classifier." src/classifiers/ only has LogisticRegressionClassifier; mlp.py is an empty file, no kNN exists at all. This is small (sklearn KNeighborsClassifier wrapped like linear.py) and should exist before you start comparing representations, since your comparisons are supposed to run through both heads.
+
+2. Cross-institute split (Experiment 2) — src/preprocessor/splits.py only has assign_donor_splits (one institute, held-out donors). Nothing builds "train on institute A, test on entirely held-out institute B" yet. You have 5 institutes in the manifest, so this is doable and — importantly — testable immediately with your existing PCA + sweep pipeline, no new representation needed. I'd do this before touching scVI/foundation models, since it validates the split logic cheaply.
+
+3. Repeat the within-institute split with more institutes and seeds — README also calls for "repeated group-aware splits." Right now you have exactly one split file (Singapore, seed 42). Worth generating a couple more (different institute, different seed) so your Experiment 1 results aren't a single lucky/unlucky split.
+
+4. scVI representation — src/representations/scvi.py is an empty stub (no fit/transform). This is the next real representation to implement: needs raw counts (adata.raw.X or a counts layer), trains a VAE per-run on train cells, has two regimes per the README (inductive vs. transductive). Your requirements-cuda.txt and CUDA Dockerfile target are already scaffolded for this, so infra is half-ready. I'd do this before foundation models — no external checkpoint dependency, you control the whole pipeline.
+
+5. Foundation model embedding — foundation.py is also an empty stub. Comes last: needs picking a specific model + checkpoint (scGPT/Geneformer/scFoundation), mapping the AIDA gene panel to that model's vocabulary, and a frozen forward pass. Most external dependencies, least under your control, so it makes sense to validate the whole pipeline (splits, both classifier heads, metrics) against PCA and scVI first.
+
+Nothing here needs to happen in this exact order for correctness — 2 and 3 don't depend on 1, 4, or 5 — but doing 1–3 first means when scVI/foundation embeddings are ready, they drop into a pipeline that's already been exercised end-to-end.
