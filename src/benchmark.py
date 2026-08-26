@@ -2,6 +2,7 @@ import argparse
 import json
 import logging
 import shutil
+import sys
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -226,6 +227,7 @@ def run_model_sweep(
     manifest_file: str | Path = DEFAULT_MANIFEST_FILE,
     label_column: str = "cell_type",
     eval_splits: Sequence[str] = ("dev", "test"),
+    log_level: str = "INFO",
 ) -> Path:
     """Compare classifiers on embeddings already cached in `run_dir`.
 
@@ -239,6 +241,10 @@ def run_model_sweep(
     run_dir = Path(run_dir)
     if not model_configs:
         raise ValueError("At least one model config must be provided")
+
+    _configure_logging(run_dir, log_level)
+    LOGGER.info("Starting model sweep with %d config(s)", len(model_configs))
+    LOGGER.info("Run directory: %s", run_dir)
 
     split_manifest = pd.read_csv(
         run_dir / "split_manifest.csv.gz",
@@ -321,7 +327,7 @@ def _configure_logging(run_dir: Path, log_level: str) -> None:
         "%(asctime)s %(levelname)s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    stream_handler = logging.StreamHandler()
+    stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(formatter)
     file_handler = logging.FileHandler(run_dir / "benchmark.log", encoding="utf-8")
     file_handler.setFormatter(formatter)
@@ -420,6 +426,7 @@ def main() -> None:
                 manifest_file=args.manifest_file,
                 label_column=args.label_column,
                 eval_splits=args.splits,
+                log_level=args.log_level,
             )
         else:
             run_pca_benchmark(
